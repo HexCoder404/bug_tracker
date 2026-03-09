@@ -96,17 +96,24 @@ export function BugProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    // Initial fetch
     fetchBugs();
 
-    // Subscribe to real-time changes
+    // Debounce timer for refetches
+    let refetchTimeout: NodeJS.Timeout;
+
+    // Subscribe to real-time changes with debounce
     const bugSubscription = supabase
       .channel("bugs")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "bugs" },
         () => {
-          // Refetch bugs when any change happens
-          fetchBugs();
+          // Debounce refetch - wait 500ms before refetching
+          clearTimeout(refetchTimeout);
+          refetchTimeout = setTimeout(() => {
+            fetchBugs();
+          }, 500);
         },
       )
       .subscribe();
@@ -117,13 +124,17 @@ export function BugProvider({ children }: { children: React.ReactNode }) {
         "postgres_changes",
         { event: "*", schema: "public", table: "comments" },
         () => {
-          // Refetch bugs (which includes comments) when any change happens
-          fetchBugs();
+          // Debounce refetch - wait 500ms before refetching
+          clearTimeout(refetchTimeout);
+          refetchTimeout = setTimeout(() => {
+            fetchBugs();
+          }, 500);
         },
       )
       .subscribe();
 
     return () => {
+      clearTimeout(refetchTimeout);
       bugSubscription.unsubscribe();
       commentSubscription.unsubscribe();
     };
