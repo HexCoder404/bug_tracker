@@ -46,6 +46,7 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 4. Click **Run**
 
 This will create:
+
 - `bugs` table - stores bug reports
 - `comments` table - stores comments on bugs
 - Row Level Security (RLS) policies - ensures users can only see their own bugs
