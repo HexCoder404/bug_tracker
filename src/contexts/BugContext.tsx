@@ -1,161 +1,261 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import type { Bug, Comment } from '../types';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
+import { supabase } from "../supabaseClient";
+import { useAuth } from "./AuthContext";
+import type { Bug, Comment } from "../types";
 
 interface BugContextType {
   bugs: Bug[];
-  addBug: (bug: Omit<Bug, 'id' | 'comments' | 'createdAt' | 'updatedAt'>) => void;
-  updateBug: (id: string, updates: Partial<Bug>) => void;
-  deleteBug: (id: string) => void;
-  addComment: (bugId: string, comment: Omit<Comment, 'id' | 'createdAt'>) => void;
+  addBug: (
+    bug: Omit<Bug, "id" | "comments" | "createdAt" | "updatedAt">,
+  ) => Promise<void>;
+  updateBug: (id: string, updates: Partial<Bug>) => Promise<void>;
+  deleteBug: (id: string) => Promise<void>;
+  addComment: (
+    bugId: string,
+    comment: Omit<Comment, "id" | "createdAt">,
+  ) => Promise<void>;
   getBugById: (id: string) => Bug | undefined;
-  getStats: () => { open: number; inProgress: number; resolved: number; closed: number; total: number; critical: number };
+  getStats: () => {
+    open: number;
+    inProgress: number;
+    resolved: number;
+    closed: number;
+    total: number;
+    critical: number;
+  };
+  loading: boolean;
 }
 
 const BugContext = createContext<BugContextType | null>(null);
 
-const BUGS_KEY = 'bughive_bugs';
-
-const defaultBugs: Bug[] = [
-  {
-    id: 'bug-1',
-    title: 'Login page crashes on mobile devices',
-    description: 'When users try to log in on mobile devices (both iOS and Android), the page crashes after entering credentials. This affects all mobile browsers.',
-    priority: 'critical',
-    status: 'open',
-    assignee: 'demo',
-    reporter: 'user-1',
-    reporterName: 'demo',
-    tags: ['mobile', 'auth', 'crash'],
-    comments: [
-      { id: 'c-1', bugId: 'bug-1', userId: 'user-1', username: 'demo', text: 'Reproduced on iPhone 14 with Safari', createdAt: new Date(Date.now() - 3600000).toISOString() }
-    ],
-    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    updatedAt: new Date(Date.now() - 3600000).toISOString(),
-  },
-  {
-    id: 'bug-2',
-    title: 'Dashboard charts not rendering correctly',
-    description: 'The pie charts on the analytics dashboard are overlapping with the legend when screen width is between 768px and 1024px.',
-    priority: 'medium',
-    status: 'in-progress',
-    assignee: 'demo',
-    reporter: 'user-1',
-    reporterName: 'demo',
-    tags: ['ui', 'charts', 'responsive'],
-    comments: [],
-    createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-  },
-  {
-    id: 'bug-3',
-    title: 'Email notifications sent twice',
-    description: 'Users are receiving duplicate email notifications for every event. The issue started after the last deployment.',
-    priority: 'high',
-    status: 'resolved',
-    assignee: 'demo',
-    reporter: 'user-1',
-    reporterName: 'demo',
-    tags: ['email', 'notifications', 'backend'],
-    comments: [
-      { id: 'c-2', bugId: 'bug-3', userId: 'user-1', username: 'demo', text: 'Fixed by removing duplicate event listener in notification service', createdAt: new Date(Date.now() - 7200000).toISOString() }
-    ],
-    createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
-    updatedAt: new Date(Date.now() - 7200000).toISOString(),
-  },
-  {
-    id: 'bug-4',
-    title: 'Typo in footer copyright text',
-    description: 'The footer shows "Copyrght 2024" instead of "Copyright 2024".',
-    priority: 'low',
-    status: 'closed',
-    assignee: 'demo',
-    reporter: 'user-1',
-    reporterName: 'demo',
-    tags: ['typo', 'ui'],
-    comments: [],
-    createdAt: new Date(Date.now() - 86400000 * 10).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 8).toISOString(),
-  },
-  {
-    id: 'bug-5',
-    title: 'Search functionality returns incorrect results',
-    description: 'When searching for items with special characters (e.g., &, <, >), the search returns no results even when matching items exist in the database.',
-    priority: 'high',
-    status: 'open',
-    assignee: '',
-    reporter: 'user-1',
-    reporterName: 'demo',
-    tags: ['search', 'backend', 'encoding'],
-    comments: [],
-    createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-  },
-];
-
 export function BugProvider({ children }: { children: React.ReactNode }) {
-  const [bugs, setBugs] = useState<Bug[]>(() => {
-    const stored = localStorage.getItem(BUGS_KEY);
-    if (stored) return JSON.parse(stored);
-    localStorage.setItem(BUGS_KEY, JSON.stringify(defaultBugs));
-    return defaultBugs;
-  });
+  const { user } = useAuth();
+  const [bugs, setBugs] = useState<Bug[]>([]);
+  const [loading, setLoading] = useState(false);
 
+  // Fetch bugs from Supabase
   useEffect(() => {
-    localStorage.setItem(BUGS_KEY, JSON.stringify(bugs));
-  }, [bugs]);
+    if (!user) {
+      setBugs([]);
+      return;
+    }
 
-  const addBug = useCallback((bug: Omit<Bug, 'id' | 'comments' | 'createdAt' | 'updatedAt'>) => {
-    const now = new Date().toISOString();
-    const newBug: Bug = {
-      ...bug,
-      id: `bug-${Date.now()}`,
-      comments: [],
-      createdAt: now,
-      updatedAt: now,
+    const fetchBugs = async () => {
+      setLoading(true);
+      try {
+        const { data: bugsData, error: bugsError } = await supabase
+          .from("bugs")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false });
+
+        if (bugsError) throw bugsError;
+
+        const { data: commentsData, error: commentsError } = await supabase
+          .from("comments")
+          .select("*")
+          .in("bug_id", bugsData?.map((b) => b.id) || []);
+
+        if (commentsError) throw commentsError;
+
+        // Map Supabase data to Bug objects
+        const bugsWithComments: Bug[] = (bugsData || []).map((bug) => ({
+          id: bug.id,
+          title: bug.title,
+          description: bug.description,
+          priority: bug.priority,
+          status: bug.status,
+          assignee: bug.assignee || "",
+          reporter: bug.user_id,
+          reporterName: bug.reporter_name || user.username,
+          tags: bug.tags || [],
+          comments: (commentsData || [])
+            .filter((c: any) => c.bug_id === bug.id)
+            .map((c: any) => ({
+              id: c.id,
+              bugId: c.bug_id,
+              userId: c.user_id,
+              username: c.username,
+              text: c.text,
+              createdAt: c.created_at,
+            })),
+          createdAt: bug.created_at,
+          updatedAt: bug.updated_at,
+        }));
+
+        setBugs(bugsWithComments);
+      } catch (error) {
+        console.error("Error fetching bugs:", error);
+      } finally {
+        setLoading(false);
+      }
     };
-    setBugs(prev => [newBug, ...prev]);
+
+    fetchBugs();
+  }, [user]);
+
+  const addBug = useCallback(
+    async (bug: Omit<Bug, "id" | "comments" | "createdAt" | "updatedAt">) => {
+      if (!user) return;
+
+      try {
+        const { data, error } = await supabase
+          .from("bugs")
+          .insert([
+            {
+              title: bug.title,
+              description: bug.description,
+              priority: bug.priority,
+              status: bug.status,
+              assignee: bug.assignee,
+              user_id: user.id,
+              reporter_name: user.username,
+              tags: bug.tags,
+            },
+          ])
+          .select();
+
+        if (error) throw error;
+
+        const newBug: Bug = {
+          ...data[0],
+          reporter: user.id,
+          reporterName: user.username,
+          comments: [],
+        };
+
+        setBugs((prev) => [newBug, ...prev]);
+      } catch (error) {
+        console.error("Error adding bug:", error);
+      }
+    },
+    [user],
+  );
+
+  const updateBug = useCallback(async (id: string, updates: Partial<Bug>) => {
+    try {
+      const { error } = await supabase
+        .from("bugs")
+        .update({
+          title: updates.title,
+          description: updates.description,
+          priority: updates.priority,
+          status: updates.status,
+          assignee: updates.assignee,
+          tags: updates.tags,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+
+      if (error) throw error;
+
+      setBugs((prev) =>
+        prev.map((b) =>
+          b.id === id
+            ? { ...b, ...updates, updatedAt: new Date().toISOString() }
+            : b,
+        ),
+      );
+    } catch (error) {
+      console.error("Error updating bug:", error);
+    }
   }, []);
 
-  const updateBug = useCallback((id: string, updates: Partial<Bug>) => {
-    setBugs(prev => prev.map(b =>
-      b.id === id ? { ...b, ...updates, updatedAt: new Date().toISOString() } : b
-    ));
+  const deleteBug = useCallback(async (id: string) => {
+    try {
+      const { error } = await supabase.from("bugs").delete().eq("id", id);
+
+      if (error) throw error;
+
+      setBugs((prev) => prev.filter((b) => b.id !== id));
+    } catch (error) {
+      console.error("Error deleting bug:", error);
+    }
   }, []);
 
-  const deleteBug = useCallback((id: string) => {
-    setBugs(prev => prev.filter(b => b.id !== id));
-  }, []);
+  const addComment = useCallback(
+    async (bugId: string, comment: Omit<Comment, "id" | "createdAt">) => {
+      try {
+        const { data, error } = await supabase
+          .from("comments")
+          .insert([
+            {
+              bug_id: bugId,
+              user_id: comment.userId,
+              username: comment.username,
+              text: comment.text,
+            },
+          ])
+          .select();
 
-  const addComment = useCallback((bugId: string, comment: Omit<Comment, 'id' | 'createdAt'>) => {
-    const newComment: Comment = {
-      ...comment,
-      id: `comment-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-    };
-    setBugs(prev => prev.map(b =>
-      b.id === bugId
-        ? { ...b, comments: [...b.comments, newComment], updatedAt: new Date().toISOString() }
-        : b
-    ));
-  }, []);
+        if (error) throw error;
 
-  const getBugById = useCallback((id: string) => {
-    return bugs.find(b => b.id === id);
-  }, [bugs]);
+        const newComment: Comment = {
+          id: data[0].id,
+          bugId: data[0].bug_id,
+          userId: data[0].user_id,
+          username: data[0].username,
+          text: data[0].text,
+          createdAt: data[0].created_at,
+        };
+
+        setBugs((prev) =>
+          prev.map((b) =>
+            b.id === bugId
+              ? {
+                  ...b,
+                  comments: [...b.comments, newComment],
+                  updatedAt: new Date().toISOString(),
+                }
+              : b,
+          ),
+        );
+      } catch (error) {
+        console.error("Error adding comment:", error);
+      }
+    },
+    [],
+  );
+
+  const getBugById = useCallback(
+    (id: string) => {
+      return bugs.find((b) => b.id === id);
+    },
+    [bugs],
+  );
 
   const getStats = useCallback(() => {
     return {
-      open: bugs.filter(b => b.status === 'open').length,
-      inProgress: bugs.filter(b => b.status === 'in-progress').length,
-      resolved: bugs.filter(b => b.status === 'resolved').length,
-      closed: bugs.filter(b => b.status === 'closed').length,
+      open: bugs.filter((b) => b.status === "open").length,
+      inProgress: bugs.filter((b) => b.status === "in-progress").length,
+      resolved: bugs.filter((b) => b.status === "resolved").length,
+      closed: bugs.filter((b) => b.status === "closed").length,
       total: bugs.length,
-      critical: bugs.filter(b => b.priority === 'critical' && b.status !== 'closed').length,
+      critical: bugs.filter(
+        (b) => b.priority === "critical" && b.status !== "closed",
+      ).length,
     };
   }, [bugs]);
 
   return (
-    <BugContext.Provider value={{ bugs, addBug, updateBug, deleteBug, addComment, getBugById, getStats }}>
+    <BugContext.Provider
+      value={{
+        bugs,
+        addBug,
+        updateBug,
+        deleteBug,
+        addComment,
+        getBugById,
+        getStats,
+        loading,
+      }}
+    >
       {children}
     </BugContext.Provider>
   );
@@ -163,6 +263,6 @@ export function BugProvider({ children }: { children: React.ReactNode }) {
 
 export function useBugs() {
   const context = useContext(BugContext);
-  if (!context) throw new Error('useBugs must be used within BugProvider');
+  if (!context) throw new Error("useBugs must be used within BugProvider");
   return context;
 }
