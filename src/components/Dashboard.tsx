@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useBugs } from '../contexts/BugContext';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 import { cn } from '../utils/cn';
 import type { Bug, BugPriority, BugStatus } from '../types';
 import {
@@ -21,20 +22,26 @@ import {
   Send,
   AlertCircle,
   Zap,
+  ArrowLeft,
+  Copy,
+  Check,
+  Crown,
+  Users,
+  Hash,
 } from 'lucide-react';
 
 const priorityConfig: Record<BugPriority, { label: string; color: string; bg: string; border: string }> = {
-  low: { label: 'Low', color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/20' },
-  medium: { label: 'Medium', color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-400/20' },
-  high: { label: 'High', color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-400/20' },
-  critical: { label: 'Critical', color: 'text-red-400', bg: 'bg-red-400/10', border: 'border-red-400/20' },
+  low:      { label: 'Low',      color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/20' },
+  medium:   { label: 'Medium',   color: 'text-yellow-400',  bg: 'bg-yellow-400/10',  border: 'border-yellow-400/20' },
+  high:     { label: 'High',     color: 'text-orange-400',  bg: 'bg-orange-400/10',  border: 'border-orange-400/20' },
+  critical: { label: 'Critical', color: 'text-red-400',     bg: 'bg-red-400/10',     border: 'border-red-400/20' },
 };
 
 const statusConfig: Record<BugStatus, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
-  open: { label: 'Open', color: 'text-blue-400', bg: 'bg-blue-400/10', icon: <AlertCircle className="w-3.5 h-3.5" /> },
+  open:        { label: 'Open',        color: 'text-blue-400',    bg: 'bg-blue-400/10',   icon: <AlertCircle className="w-3.5 h-3.5" /> },
   'in-progress': { label: 'In Progress', color: 'text-amber-400', bg: 'bg-amber-400/10', icon: <Clock className="w-3.5 h-3.5" /> },
-  resolved: { label: 'Resolved', color: 'text-emerald-400', bg: 'bg-emerald-400/10', icon: <CheckCircle className="w-3.5 h-3.5" /> },
-  closed: { label: 'Closed', color: 'text-slate-400', bg: 'bg-slate-400/10', icon: <XCircle className="w-3.5 h-3.5" /> },
+  resolved:    { label: 'Resolved',    color: 'text-emerald-400', bg: 'bg-emerald-400/10', icon: <CheckCircle className="w-3.5 h-3.5" /> },
+  closed:      { label: 'Closed',      color: 'text-slate-400',   bg: 'bg-slate-400/10',  icon: <XCircle className="w-3.5 h-3.5" /> },
 };
 
 function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
@@ -64,9 +71,30 @@ function StatCard({ label, value, icon, color }: { label: string; value: number;
   );
 }
 
+function InviteCodeBadge({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-lg hover:bg-indigo-500/20 transition cursor-pointer group"
+      title="Copy invite code"
+    >
+      <Hash className="w-3.5 h-3.5 text-indigo-400" />
+      <span className="text-xs font-mono text-indigo-400 font-medium">{code}</span>
+      {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition" />}
+    </button>
+  );
+}
+
 function BugFormModal({ onClose, editBug }: { onClose: () => void; editBug?: Bug }) {
   const { user } = useAuth();
   const { addBug, updateBug } = useBugs();
+  const { activeWorkspace } = useWorkspace();
   const [title, setTitle] = useState(editBug?.title || '');
   const [description, setDescription] = useState(editBug?.description || '');
   const [priority, setPriority] = useState<BugPriority>(editBug?.priority || 'medium');
@@ -77,21 +105,22 @@ function BugFormModal({ onClose, editBug }: { onClose: () => void; editBug?: Bug
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !activeWorkspace) return;
     if (editBug) {
       updateBug(editBug.id, { title, description, priority, status, assignee, tags });
     } else {
-      addBug({ title, description, priority, status, assignee, reporter: user.id, reporterName: user.username, tags });
+      addBug({
+        title, description, priority, status, assignee,
+        reporter: user.id, reporterName: user.username, tags,
+        workspaceId: activeWorkspace.id,
+      });
     }
     onClose();
   };
 
   const addTag = () => {
     const t = tagInput.trim().toLowerCase();
-    if (t && !tags.includes(t)) {
-      setTags([...tags, t]);
-      setTagInput('');
-    }
+    if (t && !tags.includes(t)) { setTags([...tags, t]); setTagInput(''); }
   };
 
   return (
@@ -99,41 +128,26 @@ function BugFormModal({ onClose, editBug }: { onClose: () => void; editBug?: Bug
       <div className="bg-slate-800 border border-slate-700/50 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-6 border-b border-slate-700/50">
           <h2 className="text-lg font-semibold text-white">{editBug ? 'Edit Bug' : 'Report New Bug'}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition cursor-pointer">
-            <X className="w-5 h-5" />
-          </button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition cursor-pointer"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1.5">Title *</label>
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
+            <input type="text" value={title} onChange={e => setTitle(e.target.value)}
               className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-              placeholder="Brief description of the bug"
-              required
-            />
+              placeholder="Brief description of the bug" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1.5">Description *</label>
-            <textarea
-              value={description}
-              onChange={e => setDescription(e.target.value)}
+            <textarea value={description} onChange={e => setDescription(e.target.value)}
               className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition resize-none"
-              placeholder="Detailed description, steps to reproduce..."
-              rows={4}
-              required
-            />
+              placeholder="Detailed description, steps to reproduce..." rows={4} required />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-1.5">Priority</label>
-              <select
-                value={priority}
-                onChange={e => setPriority(e.target.value as BugPriority)}
-                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
-              >
+              <select value={priority} onChange={e => setPriority(e.target.value as BugPriority)}
+                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer">
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
@@ -142,11 +156,8 @@ function BugFormModal({ onClose, editBug }: { onClose: () => void; editBug?: Bug
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-1.5">Status</label>
-              <select
-                value={status}
-                onChange={e => setStatus(e.target.value as BugStatus)}
-                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
-              >
+              <select value={status} onChange={e => setStatus(e.target.value as BugStatus)}
+                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer">
                 <option value="open">Open</option>
                 <option value="in-progress">In Progress</option>
                 <option value="resolved">Resolved</option>
@@ -156,46 +167,32 @@ function BugFormModal({ onClose, editBug }: { onClose: () => void; editBug?: Bug
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1.5">Assignee</label>
-            <input
-              type="text"
-              value={assignee}
-              onChange={e => setAssignee(e.target.value)}
+            <input type="text" value={assignee} onChange={e => setAssignee(e.target.value)}
               className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-              placeholder="Username of assignee"
-            />
+              placeholder="Username of assignee" />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1.5">Tags</label>
             <div className="flex gap-2">
-              <input
-                type="text"
-                value={tagInput}
-                onChange={e => setTagInput(e.target.value)}
+              <input type="text" value={tagInput} onChange={e => setTagInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
                 className="flex-1 bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-                placeholder="Add tag and press Enter"
-              />
-              <button type="button" onClick={addTag} className="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition cursor-pointer">
-                Add
-              </button>
+                placeholder="Add tag and press Enter" />
+              <button type="button" onClick={addTag} className="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition cursor-pointer">Add</button>
             </div>
             {tags.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-2">
                 {tags.map(tag => (
                   <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full text-xs">
                     {tag}
-                    <button type="button" onClick={() => setTags(tags.filter(t => t !== tag))} className="hover:text-white transition cursor-pointer">
-                      <X className="w-3 h-3" />
-                    </button>
+                    <button type="button" onClick={() => setTags(tags.filter(t => t !== tag))} className="hover:text-white transition cursor-pointer"><X className="w-3 h-3" /></button>
                   </span>
                 ))}
               </div>
             )}
           </div>
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 border border-slate-600 text-slate-300 hover:bg-slate-700 rounded-lg transition cursor-pointer">
-              Cancel
-            </button>
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 border border-slate-600 text-slate-300 hover:bg-slate-700 rounded-lg transition cursor-pointer">Cancel</button>
             <button type="submit" className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition shadow-lg shadow-indigo-500/25 cursor-pointer">
               {editBug ? 'Update Bug' : 'Create Bug'}
             </button>
@@ -226,13 +223,7 @@ function BugDetailModal({ bug, onClose }: { bug: Bug; onClose: () => void }) {
     }
   };
 
-  const handleStatusChange = (status: BugStatus) => {
-    updateBug(bug.id, { status });
-  };
-
-  if (showEdit) {
-    return <BugFormModal onClose={() => { setShowEdit(false); onClose(); }} editBug={bug} />;
-  }
+  if (showEdit) return <BugFormModal onClose={() => { setShowEdit(false); onClose(); }} editBug={bug} />;
 
   const pri = priorityConfig[bug.priority];
   const sta = statusConfig[bug.status];
@@ -244,54 +235,31 @@ function BugDetailModal({ bug, onClose }: { bug: Bug; onClose: () => void }) {
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-2">
-                <span className={cn('inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border', pri.bg, pri.color, pri.border)}>
-                  {pri.label}
-                </span>
-                <span className={cn('inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium', sta.bg, sta.color)}>
-                  {sta.icon}
-                  {sta.label}
-                </span>
+                <span className={cn('inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border', pri.bg, pri.color, pri.border)}>{pri.label}</span>
+                <span className={cn('inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium', sta.bg, sta.color)}>{sta.icon}{sta.label}</span>
               </div>
               <h2 className="text-xl font-semibold text-white">{bug.title}</h2>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => setShowEdit(true)} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition cursor-pointer">
-                <Edit3 className="w-4 h-4" />
-              </button>
-              <button onClick={handleDelete} className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition cursor-pointer">
-                <Trash2 className="w-4 h-4" />
-              </button>
-              <button onClick={onClose} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition cursor-pointer">
-                <X className="w-5 h-5" />
-              </button>
+              <button onClick={() => setShowEdit(true)} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition cursor-pointer"><Edit3 className="w-4 h-4" /></button>
+              <button onClick={handleDelete} className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition cursor-pointer"><Trash2 className="w-4 h-4" /></button>
+              <button onClick={onClose} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition cursor-pointer"><X className="w-5 h-5" /></button>
             </div>
           </div>
         </div>
 
         <div className="p-6">
-          <div className="prose prose-invert max-w-none mb-6">
-            <p className="text-slate-300 whitespace-pre-wrap">{bug.description}</p>
-          </div>
+          <p className="text-slate-300 whitespace-pre-wrap mb-6">{bug.description}</p>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             <div className="bg-slate-700/30 rounded-lg p-3">
               <p className="text-xs text-slate-400 mb-1">Reporter</p>
-              <div className="flex items-center gap-2">
-                <Avatar name={bug.reporterName} size="sm" />
-                <span className="text-sm text-white">{bug.reporterName}</span>
-              </div>
+              <div className="flex items-center gap-2"><Avatar name={bug.reporterName} size="sm" /><span className="text-sm text-white">{bug.reporterName}</span></div>
             </div>
             <div className="bg-slate-700/30 rounded-lg p-3">
               <p className="text-xs text-slate-400 mb-1">Assignee</p>
               <div className="flex items-center gap-2">
-                {bug.assignee ? (
-                  <>
-                    <Avatar name={bug.assignee} size="sm" />
-                    <span className="text-sm text-white">{bug.assignee}</span>
-                  </>
-                ) : (
-                  <span className="text-sm text-slate-500">Unassigned</span>
-                )}
+                {bug.assignee ? (<><Avatar name={bug.assignee} size="sm" /><span className="text-sm text-white">{bug.assignee}</span></>) : (<span className="text-sm text-slate-500">Unassigned</span>)}
               </div>
             </div>
             <div className="bg-slate-700/30 rounded-lg p-3">
@@ -307,28 +275,19 @@ function BugDetailModal({ bug, onClose }: { bug: Bug; onClose: () => void }) {
           {bug.tags.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-6">
               {bug.tags.map(tag => (
-                <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-700/50 text-slate-300 rounded-full text-xs">
-                  <Tag className="w-3 h-3" />
-                  {tag}
-                </span>
+                <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-700/50 text-slate-300 rounded-full text-xs"><Tag className="w-3 h-3" />{tag}</span>
               ))}
             </div>
           )}
 
-          <div className="mb-4">
+          <div className="mb-6">
             <label className="block text-sm font-medium text-slate-300 mb-2">Quick Status Update</label>
             <div className="flex flex-wrap gap-2">
               {(Object.keys(statusConfig) as BugStatus[]).map(s => (
-                <button
-                  key={s}
-                  onClick={() => handleStatusChange(s)}
-                  className={cn(
-                    'px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer border',
-                    bug.status === s
-                      ? 'bg-indigo-600 border-indigo-500 text-white'
-                      : 'bg-slate-700/50 border-slate-600 text-slate-300 hover:bg-slate-700'
-                  )}
-                >
+                <button key={s} onClick={() => updateBug(bug.id, { status: s })}
+                  className={cn('px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer border',
+                    bug.status === s ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-700/50 border-slate-600 text-slate-300 hover:bg-slate-700'
+                  )}>
                   {statusConfig[s].label}
                 </button>
               ))}
@@ -337,10 +296,8 @@ function BugDetailModal({ bug, onClose }: { bug: Bug; onClose: () => void }) {
 
           <div className="border-t border-slate-700/50 pt-6">
             <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-              <MessageSquare className="w-4 h-4" />
-              Comments ({bug.comments.length})
+              <MessageSquare className="w-4 h-4" />Comments ({bug.comments.length})
             </h3>
-
             {bug.comments.length > 0 && (
               <div className="space-y-3 mb-4">
                 {bug.comments.map(comment => (
@@ -355,20 +312,12 @@ function BugDetailModal({ bug, onClose }: { bug: Bug; onClose: () => void }) {
                 ))}
               </div>
             )}
-
             <form onSubmit={handleAddComment} className="flex gap-2">
-              <input
-                type="text"
-                value={commentText}
-                onChange={e => setCommentText(e.target.value)}
+              <input type="text" value={commentText} onChange={e => setCommentText(e.target.value)}
                 placeholder="Add a comment..."
-                className="flex-1 bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition text-sm"
-              />
-              <button
-                type="submit"
-                disabled={!commentText.trim()}
-                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition cursor-pointer"
-              >
+                className="flex-1 bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition text-sm" />
+              <button type="submit" disabled={!commentText.trim()}
+                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition cursor-pointer">
                 <Send className="w-4 h-4" />
               </button>
             </form>
@@ -379,9 +328,10 @@ function BugDetailModal({ bug, onClose }: { bug: Bug; onClose: () => void }) {
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({ onBackToWorkspaces }: { onBackToWorkspaces: () => void }) {
   const { user, logout } = useAuth();
-  const { bugs, getStats } = useBugs();
+  const { getWorkspaceBugs, getWorkspaceStats } = useBugs();
+  const { activeWorkspace } = useWorkspace();
   const [showNewBug, setShowNewBug] = useState(false);
   const [selectedBug, setSelectedBug] = useState<Bug | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -389,11 +339,12 @@ export default function Dashboard() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'priority'>('newest');
 
-  const stats = getStats();
+  const workspaceId = activeWorkspace?.id || '';
+  const bugs = getWorkspaceBugs(workspaceId);
+  const stats = getWorkspaceStats(workspaceId);
 
   const filteredBugs = useMemo(() => {
     let result = [...bugs];
-
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(b =>
@@ -403,55 +354,56 @@ export default function Dashboard() {
         b.assignee.toLowerCase().includes(q)
       );
     }
-
-    if (filterPriority !== 'all') {
-      result = result.filter(b => b.priority === filterPriority);
-    }
-
-    if (filterStatus !== 'all') {
-      result = result.filter(b => b.status === filterStatus);
-    }
-
+    if (filterPriority !== 'all') result = result.filter(b => b.priority === filterPriority);
+    if (filterStatus !== 'all') result = result.filter(b => b.status === filterStatus);
     const priorityOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
-
-    if (sortBy === 'newest') {
-      result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    } else if (sortBy === 'oldest') {
-      result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    } else if (sortBy === 'priority') {
-      result.sort((a, b) => priorityOrder[b.priority] - priorityOrder[a.priority]);
-    }
-
+    if (sortBy === 'newest') result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    else if (sortBy === 'oldest') result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    else if (sortBy === 'priority') result.sort((a, b) => priorityOrder[b.priority] - priorityOrder[a.priority]);
     return result;
   }, [bugs, searchQuery, filterPriority, filterStatus, sortBy]);
 
-  // Re-fetch selectedBug from bugs list so comments/status updates are reflected
   const activeBug = selectedBug ? bugs.find(b => b.id === selectedBug.id) || null : null;
+  const isOwner = activeWorkspace?.ownerId === user?.id;
 
   return (
     <div className="min-h-screen bg-slate-900">
       {/* Header */}
       <header className="sticky top-0 z-30 bg-slate-900/80 backdrop-blur-xl border-b border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <BugIcon className="w-5 h-5 text-white" />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={onBackToWorkspaces}
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition cursor-pointer shrink-0"
+              title="Back to workspaces"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <div className="w-px h-5 bg-slate-700 shrink-0" />
+            <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 shrink-0">
+              <BugIcon className="w-4 h-4 text-white" />
             </div>
-            <h1 className="text-xl font-bold text-white hidden sm:block">BugHive</h1>
+            <div className="min-w-0">
+              <h1 className="text-sm font-bold text-white truncate">{activeWorkspace?.name || 'Dashboard'}</h1>
+              <p className="text-xs text-slate-500 hidden sm:block">
+                {activeWorkspace?.memberIds.length} member{activeWorkspace?.memberIds.length !== 1 ? 's' : ''}
+                {isOwner && ' · Owner'}
+              </p>
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {activeWorkspace && <InviteCodeBadge code={activeWorkspace.inviteCode} />}
             <button
               onClick={() => setShowNewBug(true)}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition shadow-lg shadow-indigo-500/25 cursor-pointer"
+              className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 sm:px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition shadow-lg shadow-indigo-500/25 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">New Bug</span>
             </button>
-
-            <div className="flex items-center gap-2 pl-3 border-l border-slate-700">
+            <div className="flex items-center gap-2 pl-2 sm:pl-3 border-l border-slate-700">
               <Avatar name={user?.username || 'U'} />
-              <span className="text-sm text-slate-300 hidden sm:block">{user?.username}</span>
+              <span className="text-sm text-slate-300 hidden md:block">{user?.username}</span>
               <button onClick={logout} className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition cursor-pointer" title="Log out">
                 <LogOut className="w-4 h-4" />
               </button>
@@ -461,6 +413,14 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {/* Workspace info banner */}
+        {activeWorkspace?.description && (
+          <div className="bg-indigo-500/5 border border-indigo-500/10 rounded-xl px-5 py-3 flex items-center gap-3">
+            <Users className="w-4 h-4 text-indigo-400 shrink-0" />
+            <p className="text-sm text-slate-400">{activeWorkspace.description}</p>
+          </div>
+        )}
+
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 md:gap-4">
           <StatCard label="Total Bugs" value={stats.total} icon={<BugIcon className="w-4 h-4 text-white" />} color="bg-indigo-500/20" />
@@ -477,41 +437,30 @@ export default function Dashboard() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Search bugs by title, description, tags, or assignee..."
                 className="w-full bg-slate-700/50 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition text-sm"
               />
             </div>
             <div className="flex gap-2 flex-wrap">
-              <select
-                value={filterPriority}
-                onChange={e => setFilterPriority(e.target.value)}
-                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
-              >
+              <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
+                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer">
                 <option value="all">All Priorities</option>
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
                 <option value="critical">Critical</option>
               </select>
-              <select
-                value={filterStatus}
-                onChange={e => setFilterStatus(e.target.value)}
-                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
-              >
+              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer">
                 <option value="all">All Statuses</option>
                 <option value="open">Open</option>
                 <option value="in-progress">In Progress</option>
                 <option value="resolved">Resolved</option>
                 <option value="closed">Closed</option>
               </select>
-              <select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value as 'newest' | 'oldest' | 'priority')}
-                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer"
-              >
+              <select value={sortBy} onChange={e => setSortBy(e.target.value as 'newest' | 'oldest' | 'priority')}
+                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer">
                 <option value="newest">Newest First</option>
                 <option value="oldest">Oldest First</option>
                 <option value="priority">Priority</option>
@@ -529,13 +478,10 @@ export default function Dashboard() {
               <p className="text-slate-500 mb-4">
                 {searchQuery || filterPriority !== 'all' || filterStatus !== 'all'
                   ? 'Try adjusting your filters'
-                  : 'Click "New Bug" to report your first bug'}
+                  : 'Click "New Bug" to report your first bug in this workspace'}
               </p>
               {!searchQuery && filterPriority === 'all' && filterStatus === 'all' && (
-                <button
-                  onClick={() => setShowNewBug(true)}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer"
-                >
+                <button onClick={() => setShowNewBug(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer">
                   Report a Bug
                 </button>
               )}
@@ -559,16 +505,11 @@ export default function Dashboard() {
                     )} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-3 mb-1.5">
-                        <h3 className="text-white font-medium group-hover:text-indigo-300 transition truncate">
-                          {bug.title}
-                        </h3>
+                        <h3 className="text-white font-medium group-hover:text-indigo-300 transition truncate">{bug.title}</h3>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border', pri.bg, pri.color, pri.border)}>
-                            {pri.label}
-                          </span>
+                          <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border', pri.bg, pri.color, pri.border)}>{pri.label}</span>
                           <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', sta.bg, sta.color)}>
-                            {sta.icon}
-                            <span className="hidden sm:inline">{sta.label}</span>
+                            {sta.icon}<span className="hidden sm:inline">{sta.label}</span>
                           </span>
                         </div>
                       </div>
@@ -576,30 +517,23 @@ export default function Dashboard() {
                       <div className="flex items-center gap-4 flex-wrap">
                         {bug.assignee && (
                           <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                            <User className="w-3 h-3" />
-                            {bug.assignee}
+                            <User className="w-3 h-3" />{bug.assignee}
                           </div>
                         )}
                         <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                          <Calendar className="w-3 h-3" />
-                          {new Date(bug.createdAt).toLocaleDateString()}
+                          <Calendar className="w-3 h-3" />{new Date(bug.createdAt).toLocaleDateString()}
                         </div>
                         {bug.comments.length > 0 && (
                           <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                            <MessageSquare className="w-3 h-3" />
-                            {bug.comments.length}
+                            <MessageSquare className="w-3 h-3" />{bug.comments.length}
                           </div>
                         )}
                         {bug.tags.length > 0 && (
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {bug.tags.slice(0, 3).map(tag => (
-                              <span key={tag} className="px-2 py-0.5 bg-slate-700/50 text-slate-400 rounded text-xs">
-                                {tag}
-                              </span>
+                              <span key={tag} className="px-2 py-0.5 bg-slate-700/50 text-slate-400 rounded text-xs">{tag}</span>
                             ))}
-                            {bug.tags.length > 3 && (
-                              <span className="text-xs text-slate-500">+{bug.tags.length - 3}</span>
-                            )}
+                            {bug.tags.length > 3 && <span className="text-xs text-slate-500">+{bug.tags.length - 3}</span>}
                           </div>
                         )}
                       </div>
@@ -616,7 +550,6 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* Modals */}
       {showNewBug && <BugFormModal onClose={() => setShowNewBug(false)} />}
       {activeBug && <BugDetailModal bug={activeBug} onClose={() => setSelectedBug(null)} />}
     </div>

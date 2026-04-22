@@ -21,6 +21,7 @@ export interface Comment {
 
 export interface Bug {
   id: string;
+  workspaceId: string;
   title: string;
   description: string;
   priority: BugPriority;
@@ -32,4 +33,16 @@ export interface Bug {
   comments: Comment[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  ownerId: string;
+  ownerName: string;
+  memberIds: string[];
+  inviteCode: string;
+  createdAt: string;
+  color: string; // accent color class
 }
