@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { Bug, Comment } from '../types';
+import { supabase } from '../lib/supabase';
 
 interface BugContextType {
   bugs: Bug[];
@@ -14,24 +15,33 @@ interface BugContextType {
 
 const BugContext = createContext<BugContextType | null>(null);
 
-const BUGS_KEY = 'bughive_bugs';
-
 export function BugProvider({ children }: { children: React.ReactNode }) {
-  const [bugs, setBugs] = useState<Bug[]>(() => {
-    const stored = localStorage.getItem(BUGS_KEY);
-    if (stored) {
-      const parsed: Bug[] = JSON.parse(stored);
-      // Migrate old bugs that lack workspaceId
-      return parsed.map(b => ({ ...b, workspaceId: b.workspaceId || '' }));
-    }
-    return [];
-  });
+  const [bugs, setBugs] = useState<Bug[]>([]);
 
   useEffect(() => {
-    localStorage.setItem(BUGS_KEY, JSON.stringify(bugs));
-  }, [bugs]);
+    const fetchBugs = async () => {
+      const { data: bugsData, error: bugsError } = await supabase.from('bugs').select('*');
+      const { data: commentsData, error: commentsError } = await supabase.from('comments').select('*');
 
-  const addBug = useCallback((bug: Omit<Bug, 'id' | 'comments' | 'createdAt' | 'updatedAt'>) => {
+      if (bugsError || commentsError) {
+        console.error('Error fetching bugs/comments:', bugsError, commentsError);
+        return;
+      }
+
+      if (bugsData) {
+        const assembledBugs: Bug[] = bugsData.map((b: any) => ({
+          ...b,
+          comments: commentsData ? commentsData.filter((c: any) => c.bugId === b.id) : []
+        }));
+        // Sort bugs by newest first
+        assembledBugs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setBugs(assembledBugs);
+      }
+    };
+    fetchBugs();
+  }, []);
+
+  const addBug = useCallback(async (bug: Omit<Bug, 'id' | 'comments' | 'createdAt' | 'updatedAt'>) => {
     const now = new Date().toISOString();
     const newBug: Bug = {
       ...bug,
@@ -40,30 +50,60 @@ export function BugProvider({ children }: { children: React.ReactNode }) {
       createdAt: now,
       updatedAt: now,
     };
+    
+    // Optimistic UI update
     setBugs(prev => [newBug, ...prev]);
+
+    // Supabase Sync
+    const { comments, ...bugDataForDb } = newBug;
+    const { error } = await supabase.from('bugs').insert(bugDataForDb);
+    if (error) {
+      console.error('Failed to add bug to Supabase:', error);
+      // In a real app we might revert the optimistic update here
+    }
   }, []);
 
-  const updateBug = useCallback((id: string, updates: Partial<Bug>) => {
+  const updateBug = useCallback(async (id: string, updates: Partial<Bug>) => {
+    const now = new Date().toISOString();
+    // Optimistic UI update
     setBugs(prev => prev.map(b =>
-      b.id === id ? { ...b, ...updates, updatedAt: new Date().toISOString() } : b
+      b.id === id ? { ...b, ...updates, updatedAt: now } : b
     ));
+
+    // Supabase Sync
+    const dbUpdates = { ...updates, updatedAt: now };
+    delete dbUpdates.comments; // Don't try to update comments array in bugs table
+    
+    const { error } = await supabase.from('bugs').update(dbUpdates).eq('id', id);
+    if (error) console.error('Failed to update bug in Supabase:', error);
   }, []);
 
-  const deleteBug = useCallback((id: string) => {
+  const deleteBug = useCallback(async (id: string) => {
+    // Optimistic UI update
     setBugs(prev => prev.filter(b => b.id !== id));
+
+    // Supabase Sync
+    const { error } = await supabase.from('bugs').delete().eq('id', id);
+    if (error) console.error('Failed to delete bug in Supabase:', error);
   }, []);
 
-  const addComment = useCallback((bugId: string, comment: Omit<Comment, 'id' | 'createdAt'>) => {
+  const addComment = useCallback(async (bugId: string, comment: Omit<Comment, 'id' | 'createdAt'>) => {
     const newComment: Comment = {
       ...comment,
       id: `comment-${Date.now()}`,
       createdAt: new Date().toISOString(),
     };
+    
+    // Optimistic UI update
     setBugs(prev => prev.map(b =>
       b.id === bugId
         ? { ...b, comments: [...b.comments, newComment], updatedAt: new Date().toISOString() }
         : b
     ));
+
+    // Supabase Sync
+    const { error } = await supabase.from('comments').insert(newComment);
+    if (error) console.error('Failed to add comment to Supabase:', error);
   }, []);
 
   const getBugById = useCallback((id: string) => {

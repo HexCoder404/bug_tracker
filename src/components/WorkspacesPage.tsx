@@ -89,12 +89,14 @@ function CreateWorkspaceModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !name.trim()) return;
-    const ws = createWorkspace(name.trim(), description.trim(), user.id, user.username);
-    setActiveWorkspace(ws);
-    onClose();
+    const ws = await createWorkspace(name.trim(), description.trim(), user.id, user.username);
+    if (ws) {
+      setActiveWorkspace(ws);
+      onClose();
+    }
   };
 
   return (
@@ -140,11 +142,11 @@ function JoinWorkspaceModal({ onClose }: { onClose: () => void }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
     setError('');
-    const result = joinWorkspace(code, user.id);
+    const result = await joinWorkspace(code, user.id);
     if (result.success && result.workspace) {
       setActiveWorkspace(result.workspace);
       onClose();

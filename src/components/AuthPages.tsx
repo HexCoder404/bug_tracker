@@ -9,10 +9,10 @@ export function LoginPage({ onSwitchToRegister }: { onSwitchToRegister: () => vo
   const [password, setPassword] = useState('demo123');
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const result = login(email, password);
+    const result = await login(email, password);
     if (!result.success) {
       setError(result.error || 'Login failed');
     }
@@ -111,14 +111,14 @@ export function RegisterPage({ onSwitchToLogin }: { onSwitchToLogin: () => void 
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (password.length < 6) {
       setError('Password must be at least 6 characters');
       return;
     }
-    const result = register(username, email, password);
+    const result = await register(username, email, password);
     if (!result.success) {
       setError(result.error || 'Registration failed');
     }

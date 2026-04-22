@@ -1,18 +1,18 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { User } from '../types';
+import { supabase } from '../lib/supabase';
 
 interface AuthContextType {
   user: User | null;
   users: User[];
-  login: (email: string, password: string) => { success: boolean; error?: string };
-  register: (username: string, email: string, password: string) => { success: boolean; error?: string };
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  register: (username: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   isAuthenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const USERS_KEY = 'bughive_users';
 const CURRENT_USER_KEY = 'bughive_current_user';
 
 const avatarColors = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#14b8a6'];
@@ -26,30 +26,12 @@ function getAvatarColor(name: string): string {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [users, setUsers] = useState<User[]>(() => {
-    const stored = localStorage.getItem(USERS_KEY);
-    if (stored) return JSON.parse(stored);
-    // Create default demo user
-    const demoUser: User = {
-      id: 'user-1',
-      username: 'demo',
-      email: 'demo@example.com',
-      password: 'demo123',
-      avatar: getAvatarColor('demo'),
-      createdAt: new Date().toISOString(),
-    };
-    localStorage.setItem(USERS_KEY, JSON.stringify([demoUser]));
-    return [demoUser];
-  });
+  const [users, setUsers] = useState<User[]>([]);
 
   const [user, setUser] = useState<User | null>(() => {
     const stored = localStorage.getItem(CURRENT_USER_KEY);
     return stored ? JSON.parse(stored) : null;
   });
-
-  useEffect(() => {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  }, [users]);
 
   useEffect(() => {
     if (user) {
@@ -59,22 +41,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  const login = useCallback((email: string, password: string) => {
-    const found = users.find(u => u.email === email && u.password === password);
-    if (found) {
-      setUser(found);
-      return { success: true };
-    }
-    return { success: false, error: 'Invalid email or password' };
-  }, [users]);
+  // Fetch all users on mount (needed for UI to show names/avatars of other users)
+  useEffect(() => {
+    const fetchUsers = async () => {
+      const { data, error } = await supabase.from('users').select('*');
+      if (error) {
+        console.error('Error fetching users:', error);
+      } else if (data) {
+        setUsers(data as User[]);
+      }
+    };
+    fetchUsers();
+  }, []);
 
-  const register = useCallback((username: string, email: string, password: string) => {
-    if (users.find(u => u.email === email)) {
-      return { success: false, error: 'Email already registered' };
+  const login = useCallback(async (email: string, password: string) => {
+    // Authenticate against custom users table
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .eq('password', password)
+      .single();
+
+    if (error || !data) {
+      return { success: false, error: 'Invalid email or password' };
     }
-    if (users.find(u => u.username === username)) {
-      return { success: false, error: 'Username already taken' };
+
+    setUser(data as User);
+    return { success: true };
+  }, []);
+
+  const register = useCallback(async (username: string, email: string, password: string) => {
+    // Check if email or username exists
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('id')
+      .or(`email.eq.${email},username.eq.${username}`)
+      .limit(1);
+
+    if (existingUser && existingUser.length > 0) {
+      return { success: false, error: 'Email or Username already taken' };
     }
+
     const newUser: User = {
       id: `user-${Date.now()}`,
       username,
@@ -83,10 +91,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       avatar: getAvatarColor(username),
       createdAt: new Date().toISOString(),
     };
+
+    const { error } = await supabase.from('users').insert(newUser);
+
+    if (error) {
+      console.error('Failed to register:', error);
+      return { success: false, error: 'Registration failed. Please try again.' };
+    }
+
     setUsers(prev => [...prev, newUser]);
     setUser(newUser);
     return { success: true };
-  }, [users]);
+  }, []);
 
   const logout = useCallback(() => {
     setUser(null);

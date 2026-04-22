@@ -1,20 +1,20 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { Workspace } from '../types';
+import { supabase } from '../lib/supabase';
 
 interface WorkspaceContextType {
   workspaces: Workspace[];
   activeWorkspace: Workspace | null;
   setActiveWorkspace: (ws: Workspace | null) => void;
-  createWorkspace: (name: string, description: string, ownerId: string, ownerName: string) => Workspace;
-  joinWorkspace: (code: string, userId: string) => { success: boolean; error?: string; workspace?: Workspace };
-  leaveWorkspace: (workspaceId: string, userId: string) => void;
-  deleteWorkspace: (workspaceId: string) => void;
+  createWorkspace: (name: string, description: string, ownerId: string, ownerName: string) => Promise<Workspace | null>;
+  joinWorkspace: (code: string, userId: string) => Promise<{ success: boolean; error?: string; workspace?: Workspace }>;
+  leaveWorkspace: (workspaceId: string, userId: string) => Promise<void>;
+  deleteWorkspace: (workspaceId: string) => Promise<void>;
   getUserWorkspaces: (userId: string) => Workspace[];
 }
 
 const WorkspaceContext = createContext<WorkspaceContextType | null>(null);
 
-const WORKSPACES_KEY = 'bughive_workspaces';
 const ACTIVE_WS_KEY = 'bughive_active_workspace';
 
 const WORKSPACE_COLORS = [
@@ -31,29 +31,40 @@ function generateInviteCode(): string {
 }
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>(() => {
-    const stored = localStorage.getItem(WORKSPACES_KEY);
-    return stored ? JSON.parse(stored) : [];
-  });
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [activeWorkspace, setActiveWorkspaceState] = useState<Workspace | null>(null);
 
-  const [activeWorkspace, setActiveWorkspaceState] = useState<Workspace | null>(() => {
-    const storedId = localStorage.getItem(ACTIVE_WS_KEY);
-    if (!storedId) return null;
-    const stored = localStorage.getItem(WORKSPACES_KEY);
-    if (!stored) return null;
-    const wsList: Workspace[] = JSON.parse(stored);
-    return wsList.find(w => w.id === storedId) || null;
-  });
-
+  // Fetch all workspaces and their members
   useEffect(() => {
-    localStorage.setItem(WORKSPACES_KEY, JSON.stringify(workspaces));
-    // Keep activeWorkspace in sync if it was updated
-    if (activeWorkspace) {
-      const updated = workspaces.find(w => w.id === activeWorkspace.id);
-      if (updated) setActiveWorkspaceState(updated);
-    }
-  }, [workspaces]);
+    const fetchWorkspaces = async () => {
+      const { data: wsData, error: wsError } = await supabase.from('workspaces').select('*');
+      const { data: memberData, error: memberError } = await supabase.from('workspace_members').select('*');
 
+      if (wsError || memberError) {
+        console.error('Error fetching workspaces:', wsError, memberError);
+        return;
+      }
+
+      if (wsData) {
+        const assembledWorkspaces: Workspace[] = wsData.map((w: any) => {
+          const members = memberData ? memberData.filter((m: any) => m.workspaceId === w.id).map((m: any) => m.userId) : [];
+          return { ...w, memberIds: members };
+        });
+        
+        setWorkspaces(assembledWorkspaces);
+
+        // Restore active workspace from localStorage after workspaces are loaded
+        const storedId = localStorage.getItem(ACTIVE_WS_KEY);
+        if (storedId) {
+          const found = assembledWorkspaces.find(ws => ws.id === storedId);
+          if (found) setActiveWorkspaceState(found);
+        }
+      }
+    };
+    fetchWorkspaces();
+  }, []);
+
+  // Sync active workspace to localStorage
   const setActiveWorkspace = useCallback((ws: Workspace | null) => {
     setActiveWorkspaceState(ws);
     if (ws) {
@@ -63,7 +74,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const createWorkspace = useCallback((name: string, description: string, ownerId: string, ownerName: string): Workspace => {
+  const createWorkspace = useCallback(async (name: string, description: string, ownerId: string, ownerName: string): Promise<Workspace | null> => {
     const colorIdx = Math.floor(Math.random() * WORKSPACE_COLORS.length);
     const newWs: Workspace = {
       id: `ws-${Date.now()}`,
@@ -76,36 +87,82 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       createdAt: new Date().toISOString(),
       color: WORKSPACE_COLORS[colorIdx],
     };
+
+    // Optimistic UI
     setWorkspaces(prev => [...prev, newWs]);
+
+    // Supabase Sync
+    const { memberIds, ...wsDbData } = newWs;
+    const { error: wsError } = await supabase.from('workspaces').insert(wsDbData);
+    if (wsError) {
+      console.error('Failed to create workspace:', wsError);
+      return null;
+    }
+
+    // Insert owner as a member
+    const { error: memberError } = await supabase.from('workspace_members').insert({
+      workspaceId: newWs.id,
+      userId: ownerId
+    });
+    
+    if (memberError) console.error('Failed to add workspace member:', memberError);
+
     return newWs;
   }, []);
 
-  const joinWorkspace = useCallback((code: string, userId: string): { success: boolean; error?: string; workspace?: Workspace } => {
+  const joinWorkspace = useCallback(async (code: string, userId: string): Promise<{ success: boolean; error?: string; workspace?: Workspace }> => {
     const ws = workspaces.find(w => w.inviteCode === code.toUpperCase().trim());
     if (!ws) return { success: false, error: 'Invalid invite code. Please check and try again.' };
+    
     if (ws.memberIds.includes(userId)) {
       return { success: false, error: 'You are already a member of this workspace.', workspace: ws };
     }
+
+    // Optimistic UI
     setWorkspaces(prev => prev.map(w =>
       w.id === ws.id ? { ...w, memberIds: [...w.memberIds, userId] } : w
     ));
+
+    // Supabase Sync
+    const { error } = await supabase.from('workspace_members').insert({
+      workspaceId: ws.id,
+      userId
+    });
+
+    if (error) {
+      console.error('Failed to join workspace:', error);
+      return { success: false, error: 'Failed to join workspace' };
+    }
+
     return { success: true, workspace: ws };
   }, [workspaces]);
 
-  const leaveWorkspace = useCallback((workspaceId: string, userId: string) => {
+  const leaveWorkspace = useCallback(async (workspaceId: string, userId: string) => {
+    // Optimistic UI
     setWorkspaces(prev => prev.map(w =>
       w.id === workspaceId ? { ...w, memberIds: w.memberIds.filter(id => id !== userId) } : w
     ));
+
     if (activeWorkspace?.id === workspaceId) {
       setActiveWorkspace(null);
     }
+
+    // Supabase Sync
+    const { error } = await supabase.from('workspace_members').delete().match({ workspaceId, userId });
+    if (error) console.error('Failed to leave workspace:', error);
   }, [activeWorkspace, setActiveWorkspace]);
 
-  const deleteWorkspace = useCallback((workspaceId: string) => {
+  const deleteWorkspace = useCallback(async (workspaceId: string) => {
+    // Optimistic UI
     setWorkspaces(prev => prev.filter(w => w.id !== workspaceId));
+
     if (activeWorkspace?.id === workspaceId) {
       setActiveWorkspace(null);
     }
+
+    // Supabase Sync (Cascades will handle members and bugs)
+    const { error } = await supabase.from('workspaces').delete().eq('id', workspaceId);
+    if (error) console.error('Failed to delete workspace:', error);
   }, [activeWorkspace, setActiveWorkspace]);
 
   const getUserWorkspaces = useCallback((userId: string): Workspace[] => {
